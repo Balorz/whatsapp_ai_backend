@@ -1,0 +1,1 @@
+app name on whatsapp = Buizz-Ai-Assistant
