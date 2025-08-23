@@ -1,15 +1,63 @@
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel
-from app.services.user import register_user, UserRegistrationError, upsert_user_with_onboarding
+from typing import Optional
+from app.services.user import register_user, UserRegistrationError, upsert_user_with_onboarding, discover_and_upsert_tenant
+from bson.objectid import ObjectId
+from datetime import datetime
+from app.utils.helpers import serialize_tenant
 import logging
 import os
 
 user_router = APIRouter()
 
 class SignupRequest(BaseModel):
-    whatsapp_number: str
-    facebook_access_token: str
+  # Used for user registration (keeps facebook access token for /signup)
+  whatsapp_number: str
+  facebook_access_token: str
+
+
+class TenantSignupRequest(BaseModel):
+  # Tenant signup should only accept the WhatsApp number and optional provider fields
+  whatsapp_number: str
+  # Optional fields: if provided we will persist them directly and skip discovery
+  phone_number_id: Optional[str] = None
+  access_token: Optional[str] = None
+
+
+@user_router.post("/signup/tenant")
+async def signup_tenant(request: TenantSignupRequest):
+  try:
+    # If explicit onboarding fields are provided, persist them directly
+    if request.phone_number_id or request.access_token:
+      tenant = await upsert_user_with_onboarding(
+        whatsapp_number=request.whatsapp_number,
+        facebook_user_id=None,
+        waba_id=None,
+        phone_number_id=request.phone_number_id,
+        access_token=request.access_token
+      )
+    else:
+      # No facebook token available in this endpoint anymore; create a placeholder tenant
+      tenant = await upsert_user_with_onboarding(
+        whatsapp_number=request.whatsapp_number,
+        facebook_user_id=None,
+        waba_id=None,
+        phone_number_id=None,
+        access_token=None
+      )
+
+    if not tenant:
+      raise HTTPException(status_code=500, detail="Failed to create tenant")
+
+    # sanitize tenant for response
+    tenant_copy = dict(tenant)
+    tenant_copy.pop("access_token_enc", None)
+    tenant_copy = serialize_tenant(tenant_copy)
+    return {"success": True, "tenant": tenant_copy}
+
+  except Exception as e:
+    raise HTTPException(status_code=500, detail=str(e))
 
 @user_router.post("/signup")
 async def signup(request: SignupRequest):
