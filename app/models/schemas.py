@@ -87,3 +87,20 @@ class MessageModel(BaseModel):
     class Config:
         from_attributes = True
         validate_by_name = True
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+class TenantResponse(BaseModel):
+    id: str
+    name: str
+    slug: str
+    status: str
+    phone_number_id: str
+
+class LoginResponse(BaseModel):
+    success: bool
+    tenant: TenantResponse
+    access_token: str
+    token_type: str

@@ -3,14 +3,15 @@ from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel
 from typing import Optional
 from app.services.user import register_user, UserRegistrationError, upsert_user_with_onboarding, discover_and_upsert_tenant, verify_password
-from app.models.schemas import LoginRequest
+from app.models.schemas import LoginRequest, LoginResponse, TenantResponse
 from bson.objectid import ObjectId
 from datetime import datetime
 from app.utils.helpers import serialize_tenant
 import logging
 import os
+from app.utils.auth import create_access_token
 
-user_router = APIRouter()
+user_router = APIRouter(tags=["Auth"])
 
 class SignupRequest(BaseModel):
   # Used for user registration (keeps facebook access token for /signup)
@@ -28,7 +29,7 @@ class TenantSignupRequest(BaseModel):
   access_token: Optional[str] = None
 
 
-@user_router.post("/signup/tenant")
+@user_router.post("/signup/tenant", response_model=LoginResponse)
 async def signup_tenant(request: TenantSignupRequest):
   try:
     # If explicit onboarding fields are provided, persist them directly
@@ -55,11 +56,24 @@ async def signup_tenant(request: TenantSignupRequest):
     if not tenant:
       raise HTTPException(status_code=500, detail="Failed to create tenant")
 
+    # Create access token
+    access_token = create_access_token(
+        data={"sub": str(tenant["_id"])}
+    )
+
     # sanitize tenant for response
     tenant_copy = dict(tenant)
     tenant_copy.pop("access_token_enc", None)
+    tenant_copy.pop("password", None)
     tenant_copy = serialize_tenant(tenant_copy)
-    return {"success": True, "tenant": tenant_copy}
+    tenant_copy['id'] = tenant_copy.pop('_id')
+    
+    return LoginResponse(
+        success=True,
+        tenant=TenantResponse(**tenant_copy),
+        access_token=access_token,
+        token_type="bearer"
+    )
 
   except Exception as e:
     raise HTTPException(status_code=500, detail=str(e))
@@ -70,12 +84,19 @@ async def login(request: LoginRequest):
         tenant = await verify_password(request.phone_number, request.password)
         if not tenant:
             raise HTTPException(status_code=401, detail="Invalid credentials")
-        # sanitize tenant for response
-        tenant_copy = dict(tenant)
-        tenant_copy.pop("access_token_enc", None)
-        tenant_copy.pop("password", None)
-        tenant_copy = serialize_tenant(tenant_copy)
-        return {"success": True, "tenant": tenant_copy}
+        
+        # Create access token
+        access_token = create_access_token(
+            data={"sub": str(tenant["_id"])}
+        )
+        
+        # Return a hardcoded dictionary to test
+        return {
+            "success": True,
+            "message": "Login successfull",
+            "access_token": access_token,
+            "token_type": "bearer"
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -216,4 +237,4 @@ async def facebook_callback(request: Request):
         )
         return HTMLResponse(f"<h2>Signup Complete!</h2><p>Your WhatsApp Business number is now onboarded and ready to use.</p><pre>{params}</pre>")
     else:
-        return HTMLResponse(f"<h2>Signup Failed</h2><p>Missing required onboarding parameters.</p><pre>{params}</pre>", status_code=400) 
+        return HTMLResponse(f"<h2>Signup Failed</h2><p>Missing required onboarding parameters.</p><pre>{params}</pre>", status_code=400)
