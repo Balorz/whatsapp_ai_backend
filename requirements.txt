@@ -25,3 +25,5 @@ urllib3==2.5.0
 uvicorn==0.35.0
 dotenv
 motor
+passlib==1.7.4
+bcrypt==3.2.0

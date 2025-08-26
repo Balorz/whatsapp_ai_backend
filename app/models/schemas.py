@@ -12,6 +12,7 @@ class TenantModel(BaseModel):
     phone_hash: Optional[str]
     access_token_enc: Optional[str]
     verify_token_enc: Optional[str]
+    password: Optional[str]
     settings: Optional[Dict[str, Any]]
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
@@ -19,6 +20,10 @@ class TenantModel(BaseModel):
     class Config:
         from_attributes = True
         validate_by_name = True
+
+class LoginRequest(BaseModel):
+    phone_number: str
+    password: str
 
 class ContactModel(BaseModel):
     id: Optional[str] = Field(default=None, alias="_id")

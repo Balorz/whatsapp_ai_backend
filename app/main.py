@@ -1,11 +1,14 @@
+from dotenv import load_dotenv, find_dotenv
+
+# Find and load the .env file
+dotenv_path = find_dotenv()
+load_dotenv(dotenv_path)
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.routes.message import message_router
 from app.routes.user import user_router
-from dotenv import load_dotenv
 from app.db.mongo_connection import ensure_indexes
-
-load_dotenv()
 
 app = FastAPI(
     title="WhatsApp AI Assistant",
@@ -24,6 +27,8 @@ app.add_middleware(
 
 app.include_router(message_router)
 app.include_router(user_router)
+from app.routes.business import business_router
+app.include_router(business_router)
 
 
 @app.on_event("startup")
