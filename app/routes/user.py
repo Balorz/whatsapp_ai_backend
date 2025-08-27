@@ -66,12 +66,11 @@ async def signup_tenant(request: TenantSignupRequest):
     tenant_copy.pop("access_token_enc", None)
     tenant_copy.pop("password", None)
     tenant_copy = serialize_tenant(tenant_copy)
-    tenant_copy['id'] = tenant_copy.pop('_id')
     
     return LoginResponse(
         success=True,
         tenant=TenantResponse(**tenant_copy),
-        access_token=access_token,
+        access_token=access_token,  # Add this line
         token_type="bearer"
     )
 
