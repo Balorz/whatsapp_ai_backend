@@ -1,21 +1,117 @@
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel
-from app.services.user import register_user, UserRegistrationError, upsert_user_with_onboarding
+from typing import Optional
+from app.services.user import register_user, UserRegistrationError, upsert_user_with_onboarding, discover_and_upsert_tenant, verify_password
+from app.models.schemas import LoginRequest, LoginResponse, TenantResponse
+from bson.objectid import ObjectId
+from datetime import datetime
+from app.utils.helpers import serialize_tenant
 import logging
 import os
+from app.utils.auth import create_access_token
 
-user_router = APIRouter()
+user_router = APIRouter(tags=["Auth"])
 
 class SignupRequest(BaseModel):
-    whatsapp_number: str
-    facebook_access_token: str
+  # Used for user registration (keeps facebook access token for /signup)
+  whatsapp_number: str
+  password: str
+  facebook_access_token: str
+
+
+class TenantSignupRequest(BaseModel):
+  # Tenant signup should only accept the WhatsApp number and optional provider fields
+  whatsapp_number: str
+  password: str
+  # Optional fields: if provided we will persist them directly and skip discovery
+  phone_number_id: Optional[str] = None
+  access_token: Optional[str] = None
+
+
+@user_router.post("/signup/tenant", response_model=LoginResponse)
+async def signup_tenant(request: TenantSignupRequest):
+  try:
+    # If explicit onboarding fields are provided, persist them directly
+    if request.phone_number_id or request.access_token:
+      tenant = await upsert_user_with_onboarding(
+        whatsapp_number=request.whatsapp_number,
+        password=request.password,
+        facebook_user_id=None,
+        waba_id=None,
+        phone_number_id=request.phone_number_id,
+        access_token=request.access_token
+      )
+    else:
+      # No facebook token available in this endpoint anymore; create a placeholder tenant
+      tenant = await upsert_user_with_onboarding(
+        whatsapp_number=request.whatsapp_number,
+        password=request.password,
+        facebook_user_id=None,
+        waba_id=None,
+        phone_number_id=None,
+        access_token=None
+      )
+
+    if not tenant:
+      raise HTTPException(status_code=500, detail="Failed to create tenant")
+
+    # Create access token
+    access_token = create_access_token(
+        data={"sub": str(tenant["_id"])}
+    )
+
+    # sanitize tenant for response
+    tenant_copy = dict(tenant)
+    tenant_copy.pop("access_token_enc", None)
+    tenant_copy.pop("password", None)
+    tenant_copy = serialize_tenant(tenant_copy)
+    tenant_copy['id'] = tenant_copy.pop('_id')
+    
+    return LoginResponse(
+        success=True,
+        tenant=TenantResponse(**tenant_copy),
+        access_token=access_token,
+        token_type="bearer"
+    )
+
+  except Exception as e:
+    raise HTTPException(status_code=500, detail=str(e))
+
+@user_router.post("/login")
+async def login(request: LoginRequest):
+    try:
+        tenant = await verify_password(request.phone_number, request.password)
+        if not tenant:
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+        
+        # Create access token
+        access_token = create_access_token(
+            data={"sub": str(tenant["_id"])}
+        )
+        
+        # Return a hardcoded dictionary to test
+        return {
+            "success": True,
+            "message": "Login successfull",
+            "access_token": access_token,
+            "token_type": "bearer"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @user_router.post("/signup")
 async def signup(request: SignupRequest):
     try:
-        user = await register_user(request.whatsapp_number, request.facebook_access_token)
-        return {"success": True, "user": user.dict(by_alias=True, exclude_none=True)}
+        tenant = await discover_and_upsert_tenant(request.facebook_access_token, request.whatsapp_number, request.password)
+        if not tenant:
+            raise HTTPException(status_code=500, detail="Failed to create tenant")
+        # sanitize tenant for response
+        tenant_copy = dict(tenant)
+        tenant_copy.pop("access_token_enc", None)
+        tenant_copy.pop("password", None)
+        tenant_copy = serialize_tenant(tenant_copy)
+        return {"success": True, "tenant": tenant_copy}
     except UserRegistrationError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -141,4 +237,4 @@ async def facebook_callback(request: Request):
         )
         return HTMLResponse(f"<h2>Signup Complete!</h2><p>Your WhatsApp Business number is now onboarded and ready to use.</p><pre>{params}</pre>")
     else:
-        return HTMLResponse(f"<h2>Signup Failed</h2><p>Missing required onboarding parameters.</p><pre>{params}</pre>", status_code=400) 
+        return HTMLResponse(f"<h2>Signup Failed</h2><p>Missing required onboarding parameters.</p><pre>{params}</pre>", status_code=400)

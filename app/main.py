@@ -1,10 +1,18 @@
-from fastapi import FastAPI
+from dotenv import load_dotenv, find_dotenv
+
+# Find and load the .env file
+dotenv_path = find_dotenv()
+load_dotenv(dotenv_path)
+
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from app.routes.message import message_router
 from app.routes.user import user_router
-from dotenv import load_dotenv
-
-load_dotenv()
+from app.db.mongo_connection import ensure_indexes
+from app.routes.business import business_router
+from app.routes.conversations import conversations_router
+from app.routes.dashboard import dashboard_router
 
 app = FastAPI(
     title="WhatsApp AI Assistant",
@@ -21,5 +29,25 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"message": exc.detail},
+    )
+
 app.include_router(message_router)
 app.include_router(user_router)
+app.include_router(business_router)
+app.include_router(conversations_router)
+app.include_router(dashboard_router)
+
+
+@app.on_event("startup")
+async def startup_event():
+    # Ensure MongoDB indexes are created on startup
+    try:
+        await ensure_indexes()
+    except Exception:
+        # ensure_indexes logs exceptions internally; don't crash startup here
+        pass
